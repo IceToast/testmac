@@ -44,13 +44,19 @@
                     <strong>EPG Offset:</strong> {{ portal['epg offset'] }} hours
                 </p>
             </div>
-            <div class="card-footer">
-                <button class="btn btn-sm btn-outline-primary" onclick="editPortal('{{ portal_id }}')">
-                    <i class="fas fa-edit"></i> Edit
-                </button>
-                <button class="btn btn-sm btn-outline-danger" onclick="deletePortal('{{ portal_id }}', '{{ portal.name }}')">
-                    <i class="fas fa-trash"></i> Delete
-                </button>
+            <div class="card-footer d-flex justify-content-between align-items-center">
+                <a class="btn btn-sm btn-outline-success" href="{{ url_for('playlist_portal', portalId=portal_id) }}" target="_blank">
+                    <i class="fas fa-download"></i> M3U
+                </a>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-primary" onclick="editPortal('{{ portal_id }}')">
+                        <i class="fas fa-edit"></i> Edit
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deletePortal('{{ portal_id }}', '{{ portal.name }}')">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
             </div>
         </div>
     </div>
