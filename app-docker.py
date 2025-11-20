@@ -2,6 +2,7 @@ import sys
 import os
 import shutil
 import time
+import subprocess
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 import xml.dom.minidom as minidom
@@ -12,50 +13,31 @@ logger = logging.getLogger("MacReplayV2")
 logger.setLevel(logging.INFO)
 logFormat = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
-# Docker-optimized paths
-if os.getenv("CONFIG"):
-    configFile = os.getenv("CONFIG")
-    log_dir = os.path.dirname(configFile)
-else:
-    # Default paths for container
-    log_dir = "/app/data"
-    configFile = os.path.join(log_dir, "MacReplayV2.json")
 
-# Create directories if they don't exist
+home_dir = os.path.expanduser("~")  # Get the user's home directory
+log_dir = os.path.join(home_dir, "Evilvir.us")  # Subdirectory for logs
+# Create the directory if it doesn't already exist
 os.makedirs(log_dir, exist_ok=True)
-os.makedirs("/app/logs", exist_ok=True)
-
-# Seamlessly migrate legacy MacReplay config filenames to the new MacReplayV2 convention
-legacyConfigFile = os.path.join(log_dir, "MacReplay.json")
-if not os.path.exists(configFile) and os.path.exists(legacyConfigFile):
-    shutil.copy2(legacyConfigFile, configFile)
-    logger.info("Legacy MacReplay config detected – migrated to MacReplayV2.json")
-
-# Log file path for container
-log_file_path = os.path.join("/app/logs", "MacReplayV2.log")
-
-# Set up logging
+# Full path to the log file
+log_file_path = os.path.join(log_dir, "MacReplayV2.log")
+# Set up the FileHandler
 fileHandler = logging.FileHandler(log_file_path)
 fileHandler.setFormatter(logFormat)
-logger.addHandler(fileHandler)
 
+logger.addHandler(fileHandler)
 consoleFormat = logging.Formatter("[%(levelname)s] %(message)s")
 consoleHandler = logging.StreamHandler()
 consoleHandler.setFormatter(consoleFormat)
 logger.addHandler(consoleHandler)
 
-# Docker-optimized ffmpeg paths (system-installed)
-ffmpeg_path = "ffmpeg"
-ffprobe_path = "ffprobe"
-
+# Use system-installed ffmpeg and ffprobe (like STB-Proxy does)
 # Check if the binaries exist
-import subprocess
 try:
-    subprocess.run([ffmpeg_path, "-version"], capture_output=True, check=True)
-    subprocess.run([ffprobe_path, "-version"], capture_output=True, check=True)
+    subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
+    subprocess.run(["ffprobe", "-version"], capture_output=True, check=True)
     logger.info("FFmpeg and FFprobe found and working")
 except (subprocess.CalledProcessError, FileNotFoundError):
-    logger.error("Error: ffmpeg or ffprobe not found!")
+    logger.error("Error: ffmpeg or ffprobe not found! Please install ffmpeg.")
 
 import flask
 from flask import Flask, jsonify
@@ -86,11 +68,12 @@ app.secret_key = secrets.token_urlsafe(32)
 def tojson_filter(obj):
     return json.dumps(obj)
 
-# Docker-optimized host configuration
+basePath = os.path.abspath(os.getcwd())
+
 if os.getenv("HOST"):
     host = os.getenv("HOST")
 else:
-    host = "0.0.0.0:8001"
+    host = "ubuntu.verbergwest.appboxes.co:13681"
 logger.info(f"Server started on http://{host}")
 
 try:
@@ -101,6 +84,24 @@ except ValueError:
 
 EPG_REFRESH_INTERVAL_SECONDS = max(60, int(EPG_REFRESH_INTERVAL_HOURS * 3600))
 
+# Get the base path for the user directory
+basePath = os.path.expanduser("~")
+
+# Determine the config file path, placing it in 'evilvir.us' subdirectory
+if os.getenv("CONFIG"):
+    configFile = os.getenv("CONFIG")
+else:
+    configFile = os.path.join(basePath, "evilvir.us", "MacReplayV2.json")
+
+# Ensure the subdirectory exists
+os.makedirs(os.path.dirname(configFile), exist_ok=True)
+
+# Seamlessly migrate legacy config filenames
+legacyConfigFile = os.path.join(basePath, "evilvir.us", "MacReplay.json")
+if not os.path.exists(configFile) and os.path.exists(legacyConfigFile):
+    shutil.copy2(legacyConfigFile, configFile)
+    logger.info("Legacy MacReplay config detected – migrated to MacReplayV2.json")
+
 logger.info(f"Using config file: {configFile}")
 
 occupied = {}
@@ -110,6 +111,7 @@ cached_playlist = None
 last_playlist_host = None
 cached_xmltv = None
 last_updated = 0
+
 
 d_ffmpegcmd = [
     "-re",                      # Flag for real-time streaming
@@ -129,6 +131,12 @@ d_ffmpegcmd = [
     "-threads", "12",           # Enable multi-threading (adjust thread count as needed)
     "pipe:"                     # Output to pipe
 ]
+
+
+
+
+
+
 
 defaultSettings = {
     "stream method": "ffmpeg",
@@ -165,6 +173,7 @@ defaultPortal = {
     "custom epg ids": {},
     "fallback channels": {},
 }
+
 
 def loadConfig():
     try:
@@ -206,21 +215,26 @@ def loadConfig():
 
     return data
 
+
 def getPortals():
     return config["portals"]
+
 
 def savePortals(portals):
     with open(configFile, "w") as f:
         config["portals"] = portals
         json.dump(config, f, indent=4)
 
+
 def getSettings():
     return config["settings"]
+
 
 def saveSettings(settings):
     with open(configFile, "w") as f:
         config["settings"] = settings
         json.dump(config, f, indent=4)
+
 
 def authorise(f):
     @wraps(f)
@@ -246,6 +260,7 @@ def authorise(f):
 
     return decorated
 
+
 def moveMac(portalId, mac):
     portals = getPortals()
     macs = portals[portalId]["macs"]
@@ -255,15 +270,18 @@ def moveMac(portalId, mac):
     portals[portalId]["macs"] = macs
     savePortals(portals)
 
+
 @app.route("/", methods=["GET"])
 @authorise
 def home():
     return redirect("/portals", code=302)
 
+
 @app.route("/portals", methods=["GET"])
 @authorise
 def portals():
     return render_template("portals.html", portals=getPortals())
+
 
 @app.route("/portal/add", methods=["POST"])
 @authorise
@@ -335,6 +353,7 @@ def portalsAdd():
         )
 
     return redirect("/portals", code=302)
+
 
 @app.route("/portal/update", methods=["POST"])
 @authorise
@@ -410,6 +429,7 @@ def portalUpdate():
 
     return redirect("/portals", code=302)
 
+
 @app.route("/portal/remove", methods=["POST"])
 @authorise
 def portalRemove():
@@ -422,11 +442,14 @@ def portalRemove():
     flash("Portal ({}) removed!".format(name), "success")
     return redirect("/portals", code=302)
 
+
 @app.route("/editor", methods=["GET"])
 @authorise
 def editor():
     return render_template("editor.html")
     
+
+
 @app.route("/editor_data", methods=["GET"])
 @authorise
 def editor_data():
@@ -519,13 +542,15 @@ def editor_data():
 
     return flask.jsonify(data)
 
+
 @app.route("/editor/save", methods=["POST"])
 @authorise
 def editorSave():
     global cached_xmltv
-    threading.Thread(target=refresh_xmltv, daemon=True).start()
-    last_playlist_host = None
-    Thread(target=refresh_lineup).start()
+    #cached_xmltv = None # The tv guide will be updated next time its downloaded
+    threading.Thread(target=refresh_xmltv, daemon=True).start() #Force update in a seperate thread
+    last_playlist_host = None     # The playlist will be updated next time it is downloaded
+    Thread(target=refresh_lineup).start() # Update the channel lineup for plex.
     enabledEdits = json.loads(request.form["enabledEdits"])
     numberEdits = json.loads(request.form["numberEdits"])
     nameEdits = json.loads(request.form["nameEdits"])
@@ -600,6 +625,7 @@ def editorSave():
     flash("Playlist config saved!", "success")
     return redirect("/editor", code=302)
 
+
 @app.route("/editor/reset", methods=["POST"])
 @authorise
 def editorReset():
@@ -617,6 +643,7 @@ def editorReset():
     flash("Playlist reset!", "success")
     return redirect("/editor", code=302)
 
+
 @app.route("/settings", methods=["GET"])
 @authorise
 def settings():
@@ -624,6 +651,7 @@ def settings():
     return render_template(
         "settings.html", settings=settings, defaultSettings=defaultSettings
     )
+
 
 @app.route("/settings/save", methods=["POST"])
 @authorise
@@ -640,6 +668,7 @@ def save():
     flash("Settings saved!", "success")
     return redirect("/settings", code=302)
 
+# Route to serve the cached playlist.m3u
 @app.route("/playlist.m3u", methods=["GET"])
 @authorise
 def playlist():
@@ -647,8 +676,10 @@ def playlist():
     
     logger.info("Playlist Requested")
     
-    current_host = request.host or "0.0.0.0:8001"
+    # Detect the current host dynamically
+    current_host = host
     
+    # Regenerate the playlist if it is empty or the host has changed
     if cached_playlist is None or len(cached_playlist) == 0 or last_playlist_host != current_host:
         logger.info(f"Regenerating playlist due to host change: {last_playlist_host} -> {current_host}")
         last_playlist_host = current_host
@@ -656,6 +687,129 @@ def playlist():
 
     return Response(cached_playlist, mimetype="text/plain")
 
+
+@app.route("/playlist_<portalName>.m3u", methods=["GET"])
+@authorise
+def playlist_portal(portalName):
+    """
+    Generate a playlist.m3u containing only channels from a specific portal,
+    identified by its configured portal name (the "Name" field in the portal config).
+    """
+    logger.info(f"Playlist Requested for portal name '{portalName}'")
+
+    playlist_host = host
+    portals = getPortals()
+
+    # Find portal by its display name
+    real_portal_id = None
+    portal_cfg = None
+    for pid, pdata in portals.items():
+        if str(pdata.get("name")) == str(portalName):
+            real_portal_id = pid
+            portal_cfg = pdata
+            break
+
+    if real_portal_id is None or portal_cfg is None:
+        logger.warning(f"Requested playlist for unknown portal name: {portalName}")
+        return Response("#EXTM3U\n", mimetype="text/plain")
+
+    if portal_cfg.get("enabled") != "true":
+        logger.info(f"Requested playlist for disabled portal name: {portalName}")
+        return Response("#EXTM3U\n", mimetype="text/plain")
+
+    enabledChannels = portal_cfg.get("enabled channels", [])
+    if not enabledChannels:
+        logger.info(f"No enabled channels for portal name: {portalName}")
+        return Response("#EXTM3U\n", mimetype="text/plain")
+
+    url = portal_cfg.get("url")
+    proxy = portal_cfg.get("proxy")
+    macs = list(portal_cfg.get("macs", {}).keys())
+
+    customChannelNames = portal_cfg.get("custom channel names", {})
+    customGenres = portal_cfg.get("custom genres", {})
+    customChannelNumbers = portal_cfg.get("custom channel numbers", {})
+    customEpgIds = portal_cfg.get("custom epg ids", {})
+
+    allChannels = None
+    genres = None
+
+    # Try each MAC until one works
+    for mac in macs:
+        try:
+            logger.info(f"Initialising portal '{portalName}' (id={real_portal_id}) for playlist with MAC {mac}")
+            token = stb.getToken(url, mac, proxy)
+            stb.getProfile(url, mac, token, proxy)
+            allChannels = stb.getAllChannels(url, mac, token, proxy)
+            genres = stb.getGenreNames(url, mac, token, proxy)
+            break
+        except Exception as e:
+            logger.warning(f"Failed to init portal '{portalName}' with MAC {mac}: {e}")
+            allChannels = None
+            genres = None
+
+    channels = []
+    if allChannels and genres:
+        for channel in allChannels:
+            channelId = str(channel.get("id"))
+            if channelId not in enabledChannels:
+                continue
+
+            # Base data from portal
+            channelName = str(channel.get("name"))
+            channelNumber = str(channel.get("number"))
+            genre = str(genres.get(str(channel.get("tv_genre_id"))))
+
+            # Apply custom overrides
+            customName = customChannelNames.get(channelId)
+            if customName:
+                channelName = customName
+
+            customGenre = customGenres.get(channelId)
+            if customGenre:
+                genre = customGenre
+
+            customNumber = customChannelNumbers.get(channelId)
+            if customNumber not in (None, ""):
+                channelNumber = customNumber
+
+            epgId = customEpgIds.get(channelId)
+            if not epgId:
+                epgId = channelName
+
+            # Build EXTINF line
+            line = "#EXTINF:-1"
+            line += f' tvg-id="{epgId}"'
+            if getSettings().get("use channel numbers", "true") == "true":
+                line += f' tvg-chno="{channelNumber}"'
+            if getSettings().get("use channel genres", "true") == "true":
+                line += f' group-title="{genre}"'
+            line += f",{channelName}\nhttp://{playlist_host}/play/{real_portal_id}/{channelId}"
+
+            channels.append(line)
+
+    # Sorting the playlist based on settings (same as global playlist)
+    if getSettings().get("sort playlist by channel name", "true") == "true":
+        channels.sort(key=lambda k: k.split(",")[1].split("\n")[0])
+    if getSettings().get("use channel numbers", "true") == "true":
+        if getSettings().get("sort playlist by channel number", "false") == "true":
+            channels.sort(key=lambda k: k.split('tvg-chno="')[1].split('"')[0])
+    if getSettings().get("use channel genres", "true") == "true":
+        if getSettings().get("sort playlist by channel genre", "false") == "true":
+            channels.sort(key=lambda k: k.split('group-title="')[1].split('"')[0])
+
+    playlist = "#EXTM3U\n" + "\n".join(channels)
+    return Response(playlist, mimetype="text/plain")
+
+
+@app.route("/m3u/<portalName>", methods=["GET"])
+@authorise
+def m3u_portal(portalName):
+    """Alias so that /m3u/<PortalName> also returns a per-portal playlist."""
+    return playlist_portal(portalName)
+
+
+# Function to manually trigger playlist update
 @app.route("/update_playlistm3u", methods=["POST"])
 def update_playlistm3u():
     generate_playlist()
@@ -665,7 +819,8 @@ def generate_playlist():
     global cached_playlist
     logger.info("Generating playlist.m3u...")
 
-    playlist_host = request.host or "0.0.0.0:8001"
+    # Detect the host dynamically from the request
+    playlist_host = host
     
     channels = []
     portals = getPortals()
@@ -731,7 +886,7 @@ def generate_playlist():
                                 + channelName
                                 + "\n"
                                 + "http://"
-                                + playlist_host
+                                + playlist_host  # Use the dynamically detected playlist host
                                 + "/play/"
                                 + portal
                                 + "/"
@@ -740,6 +895,7 @@ def generate_playlist():
                 else:
                     logger.error("Error making playlist for {}, skipping".format(name))
 
+    # Sorting the playlist based on settings
     if getSettings().get("sort playlist by channel name", "true") == "true":
         channels.sort(key=lambda k: k.split(",")[1].split("\n")[0])
     if getSettings().get("use channel numbers", "true") == "true":
@@ -752,6 +908,7 @@ def generate_playlist():
     playlist = "#EXTM3U \n"
     playlist = playlist + "\n".join(channels)
 
+    # Update the cache
     cached_playlist = playlist
     logger.info("Playlist generated and cached.")
     
@@ -759,8 +916,9 @@ def refresh_xmltv():
     settings = getSettings()
     logger.info("Refreshing XMLTV...")
 
-    # Docker-optimized cache paths
-    cache_dir = "/app/data"
+    # Set up paths for XMLTV cache
+    user_dir = os.path.expanduser("~")
+    cache_dir = os.path.join(user_dir, "Evilvir.us")
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, "MacReplayV2EPG.xml")
     legacy_cache_file = os.path.join(cache_dir, "MacReplayEPG.xml")
@@ -768,20 +926,23 @@ def refresh_xmltv():
         shutil.copy2(legacy_cache_file, cache_file)
         logger.info("Legacy MacReplay EPG cache detected – migrated to MacReplayV2EPG.xml")
 
+    # Define date cutoff for programme filtering
     day_before_yesterday = datetime.utcnow() - timedelta(days=2)
     day_before_yesterday_str = day_before_yesterday.strftime("%Y%m%d%H%M%S") + " +0000"
 
+    # Load existing cache if it exists
     cached_programmes = []
     if os.path.exists(cache_file):
         try:
             tree = ET.parse(cache_file)
             root = tree.getroot()
             for programme in root.findall("programme"):
-                stop_attr = programme.get("stop")
+                stop_attr = programme.get("stop")  # Get the 'stop' attribute
                 if stop_attr:
                     try:
+                        # Parse the stop time and compare with the cutoff
                         stop_time = datetime.strptime(stop_attr.split(" ")[0], "%Y%m%d%H%M%S")
-                        if stop_time >= day_before_yesterday:
+                        if stop_time >= day_before_yesterday:  # Keep only recent programmes
                             cached_programmes.append(ET.tostring(programme, encoding="unicode"))
                     except ValueError as e:
                         logger.warning(f"Invalid stop time format in cached programme: {stop_attr}. Skipping.")
@@ -789,6 +950,7 @@ def refresh_xmltv():
         except Exception as e:
             logger.error(f"Failed to load cache file: {e}")
 
+    # Initialize new XMLTV data
     channels = ET.Element("tv")
     programmes = ET.Element("tv")
     portals = getPortals()
@@ -878,41 +1040,49 @@ def refresh_xmltv():
                 else:
                     logger.error(f"Error making XMLTV for {name}, skipping")
 
+    # Combine channels and programmes into a single XML document
     xmltv = channels
     for programme in programmes.iter("programme"):
         xmltv.append(programme)
 
+    # Add cached programmes, ensuring no duplicates
     existing_programme_hashes = {ET.tostring(p, encoding="unicode") for p in xmltv.findall("programme")}
     for cached in cached_programmes:
         if cached not in existing_programme_hashes:
             xmltv.append(ET.fromstring(cached))
 
+    # Pretty-print the XML with blank line removal
     rough_string = ET.tostring(xmltv, encoding="unicode")
     reparsed = minidom.parseString(rough_string)
     formatted_xmltv = "\n".join([line for line in reparsed.toprettyxml(indent="  ").splitlines() if line.strip()])
 
+    # Save updated cache
     with open(cache_file, "w", encoding="utf-8") as f:
         f.write(formatted_xmltv)
     logger.info("XMLTV cache updated.")
 
+    # Update global cache
     global cached_xmltv, last_updated
     cached_xmltv = formatted_xmltv
     last_updated = time.time()
     logger.debug(f"Generated XMLTV: {formatted_xmltv}")
     
+# Endpoint to get the XMLTV data
 @app.route("/xmltv", methods=["GET"])
 @authorise
 def xmltv():
     global cached_xmltv, last_updated
     logger.info("Guide Requested")
     
-    if cached_xmltv is None or (time.time() - last_updated) > 900:
+    # Check if the cached XMLTV data is older than 15 minutes
+    if cached_xmltv is None or (time.time() - last_updated) > 900:  # 900 seconds = 15 minutes
         refresh_xmltv()
     
     return Response(
         cached_xmltv,
         mimetype="text/xml",
     )
+
 
 @app.route("/play/<portalId>/<channelId>", methods=["GET"])
 def channel(portalId, channelId):
@@ -969,7 +1139,7 @@ def channel(portalId, channelId):
 
     def testStream():
         timeout = int(getSettings()["ffmpeg timeout"]) * int(1000000)
-        ffprobecmd = [ffprobe_path, "-timeout", str(timeout), "-i", link]
+        ffprobecmd = ["ffprobe", "-timeout", str(timeout), "-i", link]
 
         if proxy:
             ffprobecmd.insert(1, "-http_proxy")
@@ -1045,7 +1215,7 @@ def channel(portalId, channelId):
             if getSettings().get("test streams", "true") == "false" or testStream():
                 if web:
                     ffmpegcmd = [
-                        ffmpeg_path,
+                        "ffmpeg",
                         "-loglevel",
                         "panic",
                         "-hide_banner",
@@ -1066,7 +1236,7 @@ def channel(portalId, channelId):
 
                 else:
                     if getSettings().get("stream method", "ffmpeg") == "ffmpeg":
-                        ffmpegcmd = f"{ffmpeg_path} {getSettings()['ffmpeg command']}"
+                        ffmpegcmd = str(getSettings()["ffmpeg command"])
                         ffmpegcmd = ffmpegcmd.replace("<url>", link)
                         ffmpegcmd = ffmpegcmd.replace(
                             "<timeout>",
@@ -1076,7 +1246,7 @@ def channel(portalId, channelId):
                             ffmpegcmd = ffmpegcmd.replace("<proxy>", proxy)
                         else:
                             ffmpegcmd = ffmpegcmd.replace("-http_proxy <proxy>", "")
-                        " ".join(ffmpegcmd.split())
+                        " ".join(ffmpegcmd.split())  # cleans up multiple whitespaces
                         ffmpegcmd = ffmpegcmd.split()
                         return Response(
                             streamData(), mimetype="application/octet-stream"
@@ -1094,8 +1264,107 @@ def channel(portalId, channelId):
         if not getSettings().get("try all macs", "true") == "true":
             break
 
-    # (Fallback logic remains the same but too long to include here)
-    # ... rest of the original channel function
+    if not web:
+        logger.info(
+            "Portal({}):Channel({}) is not working. Looking for fallbacks...".format(
+                portalId, channelId
+            )
+        )
+
+        portals = getPortals()
+        for portal in portals:
+            if portals[portal]["enabled"] == "true":
+                fallbackChannels = portals[portal]["fallback channels"]
+                if channelName in fallbackChannels.values():
+                    url = portals[portal].get("url")
+                    macs = list(portals[portal]["macs"].keys())
+                    proxy = portals[portal].get("proxy")
+                    for mac in macs:
+                        channels = None
+                        cmd = None
+                        link = None
+                        if streamsPerMac == 0 or isMacFree():
+                            for k, v in fallbackChannels.items():
+                                if v == channelName:
+                                    try:
+                                        token = stb.getToken(url, mac, proxy)
+                                        stb.getProfile(url, mac, token, proxy)
+                                        channels = stb.getAllChannels(
+                                            url, mac, token, proxy
+                                        )
+                                    except:
+                                        logger.info(
+                                            "Unable to connect to fallback Portal({}) using MAC({})".format(
+                                                portalId, mac
+                                            )
+                                        )
+                                    if channels:
+                                        fChannelId = k
+                                        for c in channels:
+                                            if str(c["id"]) == fChannelId:
+                                                cmd = c["cmd"]
+                                                break
+                                        if cmd:
+                                            if "http://localhost/" in cmd:
+                                                link = stb.getLink(
+                                                    url, mac, token, cmd, proxy
+                                                )
+                                            else:
+                                                link = cmd.split(" ")[1]
+                                            if link:
+                                                if testStream():
+                                                    logger.info(
+                                                        "Fallback found for Portal({}):Channel({})".format(
+                                                            portalId, channelId
+                                                        )
+                                                    )
+                                                    if (
+                                                        getSettings().get(
+                                                            "stream method", "ffmpeg"
+                                                        )
+                                                        == "ffmpeg"
+                                                    ):
+                                                        ffmpegcmd = str(
+                                                            getSettings()[
+                                                                "ffmpeg command"
+                                                            ]
+                                                        )
+                                                        ffmpegcmd = ffmpegcmd.replace(
+                                                            "<url>", link
+                                                        )
+                                                        ffmpegcmd = ffmpegcmd.replace(
+                                                            "<timeout>",
+                                                            str(
+                                                                int(
+                                                                    getSettings()[
+                                                                        "ffmpeg timeout"
+                                                                    ]
+                                                                )
+                                                                * int(1000000)
+                                                            ),
+                                                        )
+                                                        if proxy:
+                                                            ffmpegcmd = (
+                                                                ffmpegcmd.replace(
+                                                                    "<proxy>", proxy
+                                                                )
+                                                            )
+                                                        else:
+                                                            ffmpegcmd = ffmpegcmd.replace(
+                                                                "-http_proxy <proxy>",
+                                                                "",
+                                                            )
+                                                        " ".join(
+                                                            ffmpegcmd.split()
+                                                        )  # cleans up multiple whitespaces
+                                                        ffmpegcmd = ffmpegcmd.split()
+                                                        return Response(
+                                                            streamData(),
+                                                            mimetype="application/octet-stream",
+                                                        )
+                                                    else:
+                                                        logger.info("Redirect sent")
+                                                        return redirect(link)
 
     if freeMac:
         logger.info(
@@ -1110,27 +1379,40 @@ def channel(portalId, channelId):
 
     return make_response("No streams available", 503)
 
+
 @app.route("/dashboard")
 @authorise
 def dashboard():
     return render_template("dashboard.html")
+
 
 @app.route("/streaming")
 @authorise
 def streaming():
     return flask.jsonify(occupied)
 
+
 @app.route("/log")
 @authorise
 def log():
-    logFilePath = "/app/logs/MacReplayV2.log"
+    # Get the base path for the user directory
+    basePath = os.path.expanduser("~")
+
+    # Define the path for the log file in the 'evilvir.us' subdirectory
+    logFilePath = os.path.join(basePath, "evilvir.us", "MacReplayV2.log")
+
+    # Ensure the subdirectory exists
+    os.makedirs(os.path.dirname(logFilePath), exist_ok=True)
+
+    # Open and read the log file
+    with open(logFilePath) as f:
+        log_content = f.read()
     
-    try:
-        with open(logFilePath) as f:
-            log_content = f.read()
-        return log_content
-    except FileNotFoundError:
-        return "Log file not found"
+    return log_content
+
+
+# HD Homerun #
+
 
 def hdhr(f):
     @wraps(f)
@@ -1152,6 +1434,7 @@ def hdhr(f):
         return make_response("Error", 404)
 
     return decorated
+
 
 @app.route("/discover.json", methods=["GET"])
 @hdhr
@@ -1175,6 +1458,7 @@ def discover():
     }
     return flask.jsonify(data)
 
+
 @app.route("/lineup_status.json", methods=["GET"])
 @hdhr
 def status():
@@ -1186,6 +1470,8 @@ def status():
     }
     return flask.jsonify(data)
 
+
+# Function to refresh the lineup
 def refresh_lineup():
     global cached_lineup
     logger.info("Refreshing Lineup...")
@@ -1237,27 +1523,32 @@ def refresh_lineup():
                 else:
                     logger.error("Error making lineup for {}, skipping".format(name))
     
+    # Sort lineup by GuideNumber
     lineup.sort(key=lambda x: int(x["GuideNumber"]))
 
     cached_lineup = lineup
     logger.info("Lineup Refreshed.")
     
+    
+# Endpoint to get the current lineup
 @app.route("/lineup.json", methods=["GET"])
 @app.route("/lineup.post", methods=["POST"])
 @hdhr
 def lineup():
     logger.info("Lineup Requested")
-    if not cached_lineup:
+    if not cached_lineup:  # Refresh lineup if cache is empty
         refresh_lineup()
     logger.info("Lineup Delivered")
     return jsonify(cached_lineup)
 
+# Endpoint to manually refresh the lineup
 @app.route("/refresh_lineup", methods=["POST"])
 def refresh_lineup_endpoint():
     refresh_lineup()
     return jsonify({"status": "Lineup refreshed successfully"})
 
 def start_refresh():
+    # Run refresh_lineup in a separate thread
     threading.Thread(target=refresh_lineup, daemon=True).start()
     start_epg_scheduler()
 
@@ -1279,9 +1570,15 @@ def start_epg_scheduler(interval_seconds: int = EPG_REFRESH_INTERVAL_SECONDS):
 
     threading.Thread(target=_epg_worker, daemon=True, name="EPGRefreshScheduler").start()
     
+    
 if __name__ == "__main__":
     config = loadConfig()
+
+    # Start the refresh thread before the server
     start_refresh()
-    
-    # Always use waitress for production in container
-    waitress.serve(app, host="0.0.0.0", port=8001, _quiet=True, threads=24) 
+
+    # Start the server
+    if "TERM_PROGRAM" in os.environ.keys() and os.environ["TERM_PROGRAM"] == "vscode":
+        app.run(host="0.0.0.0", port=13681, debug=True)
+    else:
+        waitress.serve(app, port=13681, _quiet=True, threads=24)
