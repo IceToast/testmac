@@ -167,16 +167,23 @@ defaultPortal = {
 }
 
 def loadConfig():
+    """Load configuration and normalize portal IDs so that
+    the portal ID (dictionary key) always matches the portal name.
+
+    Existing configs that used UUID-style IDs will be migrated so that
+    each portal's key == portal['name'].
+    """
     try:
         with open(configFile) as f:
             data = json.load(f)
-    except:
+    except Exception:
         logger.warning("No existing config found. Creating a new one")
         data = {}
 
     data.setdefault("portals", {})
     data.setdefault("settings", {})
 
+    # Normalise settings
     settings = data["settings"]
     settingsOut = {}
 
@@ -188,19 +195,29 @@ def loadConfig():
 
     data["settings"] = settingsOut
 
+    # Normalise portals and migrate IDs -> use portal name as key
     portals = data["portals"]
     portalsOut = {}
 
-    for portal in portals:
-        portalsOut[portal] = {}
+    for old_id, portal_data in portals.items():
+        # determine new ID: use the portal name if available, otherwise fallback to old_id
+        name_value = portal_data.get("name") or old_id
+        new_id = str(name_value)
+
+        # initialise entry
+        portalsOut[new_id] = {}
         for setting, default in defaultPortal.items():
-            value = portals[portal].get(setting)
+            value = portal_data.get(setting)
             if not value or type(default) != type(value):
                 value = default
-            portalsOut[portal][setting] = value
+            portalsOut[new_id][setting] = value
+
+        # ensure the name field is in sync with the key
+        portalsOut[new_id]["name"] = new_id
 
     data["portals"] = portalsOut
 
+    # write back normalised config
     with open(configFile, "w") as f:
         json.dump(data, f, indent=4)
 
@@ -270,9 +287,10 @@ def portals():
 def portalsAdd():
     global cached_xmltv
     cached_xmltv = None
-    id = uuid.uuid4().hex
     enabled = "true"
-    name = request.form["name"]
+    # Portal ID should always equal the portal name the user enters
+    name = request.form["name"].strip()
+    id = name  # use name as portal ID everywhere
     url = request.form["url"]
     macs = list(set(request.form["macs"].split(",")))
     streamsPerMac = request.form["streams per mac"]
@@ -341,9 +359,9 @@ def portalsAdd():
 def portalUpdate():
     global cached_xmltv
     cached_xmltv = None
-    id = request.form["id"]
+    old_id = request.form["id"]
     enabled = request.form.get("enabled", "false")
-    name = request.form["name"]
+    new_name = request.form["name"].strip()
     url = request.form["url"]
     newmacs = list(set(request.form["macs"].split(",")))
     streamsPerMac = request.form["streams per mac"]
@@ -354,12 +372,17 @@ def portalUpdate():
     if not url.endswith(".php"):
         url = stb.getUrl(url, proxy)
         if not url:
-            logger.error("Error getting URL for Portal({})".format(name))
-            flash("Error getting URL for Portal({})".format(name), "danger")
+            logger.error("Error getting URL for Portal({})".format(new_name))
+            flash("Error getting URL for Portal({})".format(new_name), "danger")
             return redirect("/portals", code=302)
 
     portals = getPortals()
-    oldmacs = portals[id]["macs"]
+    portal_entry = portals.get(old_id)
+    if not portal_entry:
+        flash("Portal not found", "danger")
+        return redirect("/portals", code=302)
+
+    oldmacs = portal_entry["macs"]
     macsout = {}
     deadmacs = []
 
@@ -372,10 +395,10 @@ def portalUpdate():
                 if expiry:
                     macsout[mac] = expiry
                     logger.info(
-                        "Successfully tested MAC({}) for Portal({})".format(mac, name)
+                        "Successfully tested MAC({}) for Portal({})".format(mac, new_name)
                     )
                     flash(
-                        "Successfully tested MAC({}) for Portal({})".format(mac, name),
+                        "Successfully tested MAC({}) for Portal({})".format(mac, new_name),
                         "success",
                     )
 
@@ -386,25 +409,33 @@ def portalUpdate():
             macsout[mac] = oldmacs[mac]
 
         if mac not in macsout.keys():
-            logger.error("Error testing MAC({}) for Portal({})".format(mac, name))
-            flash("Error testing MAC({}) for Portal({})".format(mac, name), "danger")
+            logger.error("Error testing MAC({}) for Portal({})".format(mac, new_name))
+            flash("Error testing MAC({}) for Portal({})".format(mac, new_name), "danger")
 
     if len(macsout) > 0:
-        portals[id]["enabled"] = enabled
-        portals[id]["name"] = name
-        portals[id]["url"] = url
-        portals[id]["macs"] = macsout
-        portals[id]["streams per mac"] = streamsPerMac
-        portals[id]["epg offset"] = epgOffset
-        portals[id]["proxy"] = proxy
+        # Update the portal entry
+        portal_entry["enabled"] = enabled
+        portal_entry["name"] = new_name
+        portal_entry["url"] = url
+        portal_entry["macs"] = macsout
+        portal_entry["streams per mac"] = streamsPerMac
+        portal_entry["epg offset"] = epgOffset
+        portal_entry["proxy"] = proxy
+
+        new_id = new_name
+        # If the name changed, move the portal to the new ID key
+        if new_id != old_id:
+            portals.pop(old_id, None)
+        portals[new_id] = portal_entry
+
         savePortals(portals)
-        logger.info("Portal({}) updated!".format(name))
-        flash("Portal({}) updated!".format(name), "success")
+        logger.info("Portal({}) updated!".format(new_name))
+        flash("Portal({}) updated!".format(new_name), "success")
 
     else:
         logger.error(
             "None of the MACs tested OK for Portal({}). Adding not successfull".format(
-                name
+                new_name
             )
         )
 
@@ -426,7 +457,7 @@ def portalRemove():
 @authorise
 def editor():
     return render_template("editor.html")
-    
+
 @app.route("/editor_data", methods=["GET"])
 @authorise
 def editor_data():
@@ -553,7 +584,7 @@ def editorSave():
             portals[portal].setdefault("custom channel numbers", {})
             portals[portal]["custom channel numbers"].update({channelId: customNumber})
         else:
-            portals[portal]["custom channel numbers"].pop(channelId)
+            portals[portal]["custom channel numbers"].pop(channelId, None)
 
     for edit in nameEdits:
         portal = edit["portal"]
@@ -563,7 +594,7 @@ def editorSave():
             portals[portal].setdefault("custom channel names", {})
             portals[portal]["custom channel names"].update({channelId: customName})
         else:
-            portals[portal]["custom channel names"].pop(channelId)
+            portals[portal]["custom channel names"].pop(channelId, None)
 
     for edit in genreEdits:
         portal = edit["portal"]
@@ -573,7 +604,7 @@ def editorSave():
             portals[portal].setdefault("custom genres", {})
             portals[portal]["custom genres"].update({channelId: customGenre})
         else:
-            portals[portal]["custom genres"].pop(channelId)
+            portals[portal]["custom genres"].pop(channelId, None)
 
     for edit in epgEdits:
         portal = edit["portal"]
@@ -583,7 +614,7 @@ def editorSave():
             portals[portal].setdefault("custom epg ids", {})
             portals[portal]["custom epg ids"].update({channelId: customEpgId})
         else:
-            portals[portal]["custom epg ids"].pop(channelId)
+            portals[portal]["custom epg ids"].pop(channelId, None)
 
     for edit in fallbackEdits:
         portal = edit["portal"]
@@ -593,7 +624,7 @@ def editorSave():
             portals[portal].setdefault("fallback channels", {})
             portals[portal]["fallback channels"].update({channelId: channelName})
         else:
-            portals[portal]["fallback channels"].pop(channelId)
+            portals[portal]["fallback channels"].pop(channelId, None)
 
     savePortals(portals)
     logger.info("Playlist config saved!")
@@ -644,17 +675,105 @@ def save():
 @authorise
 def playlist():
     global cached_playlist, last_playlist_host
-    
+
     logger.info("Playlist Requested")
-    
+
     current_host = request.host or "0.0.0.0:8001"
-    
+
     if cached_playlist is None or len(cached_playlist) == 0 or last_playlist_host != current_host:
         logger.info(f"Regenerating playlist due to host change: {last_playlist_host} -> {current_host}")
         last_playlist_host = current_host
         generate_playlist()
 
     return Response(cached_playlist, mimetype="text/plain")
+
+@app.route("/m3u/<portalId>", methods=["GET"])
+@authorise
+def playlist_portal(portalId):
+    """Return a M3U playlist for a specific portal only.
+
+    portalId here is identical to the portal name, as per the config model.
+    """
+    logger.info(f"Per-portal playlist requested for portalId='{portalId}'")
+
+    portals = getPortals()
+    if portalId not in portals:
+        logger.warning(f"Requested playlist for unknown portalId: {portalId}")
+        return Response("#EXTM3U
+", mimetype="text/plain")
+
+    portal_cfg = portals[portalId]
+    if portal_cfg.get("enabled") != "true":
+        logger.info(f"Requested playlist for disabled portalId: {portalId}")
+        return Response("#EXTM3U
+", mimetype="text/plain")
+
+    enabledChannels = portal_cfg.get("enabled channels", [])
+    if not enabledChannels:
+        logger.info(f"No enabled channels for portalId: {portalId}")
+        return Response("#EXTM3U
+", mimetype="text/plain")
+
+    playlist_host = request.host or "0.0.0.0:8001"
+
+    url = portal_cfg.get("url")
+    proxy = portal_cfg.get("proxy")
+    macs = list(portal_cfg.get("macs", {}).keys())
+    customChannelNames = portal_cfg.get("custom channel names", {})
+    customGenres = portal_cfg.get("custom genres", {})
+    customChannelNumbers = portal_cfg.get("custom channel numbers", {})
+    customEpgIds = portal_cfg.get("custom epg ids", {})
+
+    allChannels = None
+    genres = None
+
+    # fetch channel list & genres using first working MAC
+    for mac in macs:
+        try:
+            token = stb.getToken(url, mac, proxy)
+            stb.getProfile(url, mac, token, proxy)
+            allChannels = stb.getAllChannels(url, mac, token, proxy)
+            genres = stb.getGenreNames(url, mac, token, proxy)
+            break
+        except Exception as e:
+            logger.warning(f"Failed to init portal {portalId} with MAC {mac}: {e}")
+            allChannels = None
+            genres = None
+
+    channels = []
+    if allChannels and genres:
+        for channel in allChannels:
+            channelId = str(channel.get("id"))
+            if channelId not in enabledChannels:
+                continue
+
+            channelName = customChannelNames.get(channelId) or str(channel.get("name"))
+            genreId = str(channel.get("tv_genre_id"))
+            genre = customGenres.get(channelId) or str(genres.get(genreId))
+            channelNumber = customChannelNumbers.get(channelId) or str(channel.get("number"))
+            epgId = customEpgIds.get(channelId) or channelName
+
+            line = "#EXTINF:-1" + ' tvg-id="' + epgId + '"'
+            if getSettings().get("use channel numbers", "true") == "true":
+                line += f' tvg-chno="{channelNumber}"'
+            if getSettings().get("use channel genres", "true") == "true":
+                line += f' group-title="{genre}"'
+            line += f'",{channelName}
+http://{playlist_host}/play/{portalId}/{channelId}'
+            channels.append(line)
+
+    # apply same sorting rules as global playlist
+    if getSettings().get("sort playlist by channel name", "true") == "true":
+        channels.sort(key=lambda k: k.split(",")[1].split("\n")[0])
+    if getSettings().get("use channel numbers", "true") == "true":
+        if getSettings().get("sort playlist by channel number", "false") == "true":
+            channels.sort(key=lambda k: k.split('tvg-chno="')[1].split('"')[0])
+    if getSettings().get("use channel genres", "true") == "true":
+        if getSettings().get("sort playlist by channel genre", "false") == "true":
+            channels.sort(key=lambda k: k.split('group-title="')[1].split('"')[0])
+
+    playlist_str = "#EXTM3U \n" + "\n".join(channels)
+    return Response(playlist_str, mimetype="text/plain")
 
 @app.route("/update_playlistm3u", methods=["POST"])
 def update_playlistm3u():
@@ -666,7 +785,7 @@ def generate_playlist():
     logger.info("Generating playlist.m3u...")
 
     playlist_host = request.host or "0.0.0.0:8001"
-    
+
     channels = []
     portals = getPortals()
 
@@ -754,7 +873,7 @@ def generate_playlist():
 
     cached_playlist = playlist
     logger.info("Playlist generated and cached.")
-    
+
 def refresh_xmltv():
     settings = getSettings()
     logger.info("Refreshing XMLTV...")
@@ -899,16 +1018,16 @@ def refresh_xmltv():
     cached_xmltv = formatted_xmltv
     last_updated = time.time()
     logger.debug(f"Generated XMLTV: {formatted_xmltv}")
-    
+
 @app.route("/xmltv", methods=["GET"])
 @authorise
 def xmltv():
     global cached_xmltv, last_updated
     logger.info("Guide Requested")
-    
+
     if cached_xmltv is None or (time.time() - last_updated) > 900:
         refresh_xmltv()
-    
+
     return Response(
         cached_xmltv,
         mimetype="text/xml",
@@ -1124,7 +1243,7 @@ def streaming():
 @authorise
 def log():
     logFilePath = "/app/logs/MacReplayV2.log"
-    
+
     try:
         with open(logFilePath) as f:
             log_content = f.read()
@@ -1165,7 +1284,7 @@ def discover():
         "BaseURL": host,
         "DeviceAuth": name,
         "DeviceID": id,
-    "FirmwareName": "MacReplayV2",
+        "FirmwareName": "MacReplayV2",
         "FirmwareVersion": "666",
         "FriendlyName": name,
         "LineupURL": host + "/lineup.json",
@@ -1236,12 +1355,12 @@ def refresh_lineup():
                             )
                 else:
                     logger.error("Error making lineup for {}, skipping".format(name))
-    
+
     lineup.sort(key=lambda x: int(x["GuideNumber"]))
 
     cached_lineup = lineup
     logger.info("Lineup Refreshed.")
-    
+
 @app.route("/lineup.json", methods=["GET"])
 @app.route("/lineup.post", methods=["POST"])
 @hdhr
@@ -1278,10 +1397,10 @@ def start_epg_scheduler(interval_seconds: int = EPG_REFRESH_INTERVAL_SECONDS):
             time.sleep(interval_seconds)
 
     threading.Thread(target=_epg_worker, daemon=True, name="EPGRefreshScheduler").start()
-    
+
 if __name__ == "__main__":
     config = loadConfig()
     start_refresh()
-    
+
     # Always use waitress for production in container
     waitress.serve(app, host="0.0.0.0", port=8001, _quiet=True, threads=24) 
