@@ -699,20 +699,17 @@ def playlist_portal(portalId):
     portals = getPortals()
     if portalId not in portals:
         logger.warning(f"Requested playlist for unknown portalId: {portalId}")
-        return Response("#EXTM3U
-", mimetype="text/plain")
+        return Response("#EXTM3U\n", mimetype="text/plain")
 
     portal_cfg = portals[portalId]
     if portal_cfg.get("enabled") != "true":
         logger.info(f"Requested playlist for disabled portalId: {portalId}")
-        return Response("#EXTM3U
-", mimetype="text/plain")
+        return Response("#EXTM3U\n", mimetype="text/plain")
 
     enabledChannels = portal_cfg.get("enabled channels", [])
     if not enabledChannels:
         logger.info(f"No enabled channels for portalId: {portalId}")
-        return Response("#EXTM3U
-", mimetype="text/plain")
+        return Response("#EXTM3U\n", mimetype="text/plain")
 
     playlist_host = request.host or "0.0.0.0:8001"
 
@@ -758,8 +755,7 @@ def playlist_portal(portalId):
                 line += f' tvg-chno="{channelNumber}"'
             if getSettings().get("use channel genres", "true") == "true":
                 line += f' group-title="{genre}"'
-            line += f'",{channelName}
-http://{playlist_host}/play/{portalId}/{channelId}'
+            line += f'",{channelName}\nhttp://{playlist_host}/play/{portalId}/{channelId}'
             channels.append(line)
 
     # apply same sorting rules as global playlist
@@ -1403,4 +1399,4 @@ if __name__ == "__main__":
     start_refresh()
 
     # Always use waitress for production in container
-    waitress.serve(app, host="0.0.0.0", port=8001, _quiet=True, threads=24) 
+    waitress.serve(app, host="0.0.0.0", port=8001, _quiet=True, threads=24)
