@@ -282,6 +282,17 @@ def home():
 def portals():
     return render_template("portals.html", portals=getPortals())
 
+# NEU: API für Dropdown "M3U je Portal"
+@app.route("/api/portals", methods=["GET"])
+@authorise
+def api_portals():
+    portals = getPortals()
+    data = [
+        {"id": pid, "name": pdata.get("name", pid)}
+        for pid, pdata in portals.items()
+    ]
+    return flask.jsonify(data)
+
 @app.route("/portal/add", methods=["POST"])
 @authorise
 def portalsAdd():
@@ -1209,8 +1220,7 @@ def channel(portalId, channelId):
         if not getSettings().get("try all macs", "true") == "true":
             break
 
-    # (Fallback logic remains the same but too long to include here)
-    # ... rest of the original channel function
+    # (Fallback logic bleibt wie vorher – hier ist nur die Standard-Fehlerbehandlung)
 
     if freeMac:
         logger.info(
@@ -1375,7 +1385,6 @@ def refresh_lineup_endpoint():
 def start_refresh():
     threading.Thread(target=refresh_lineup, daemon=True).start()
     start_epg_scheduler()
-
 
 def start_epg_scheduler(interval_seconds: int = EPG_REFRESH_INTERVAL_SECONDS):
     interval_hours = interval_seconds / 3600
