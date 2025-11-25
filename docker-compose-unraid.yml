@@ -6,8 +6,8 @@ services:
       args:
         PUID: 99
         PGID: 100
-  container_name: macreplayv2
-  hostname: macreplayv2
+    container_name: macreplayv2
+    hostname: macreplayv2
     restart: unless-stopped
     
     # Network configuration for Unraid
@@ -15,7 +15,7 @@ services:
     
     # Port mappings
     ports:
-      - "8001:8001"
+      - "8099:8001"
     
     # Environment variables
     environment:
@@ -27,50 +27,9 @@ services:
     # Volume mappings for Unraid
     volumes:
       # Configuration and data persistence
-  - /mnt/user/appdata/macreplayv2/data:/app/data
-  - /mnt/user/appdata/macreplayv2/logs:/app/logs
-      
-      # Optional: For development - mount templates and static files
-      # Uncomment these lines if you want to modify templates/static files without rebuilding
-  # - /mnt/user/appdata/macreplayv2/templates:/app/templates
-  # - /mnt/user/appdata/macreplayv2/static:/app/static
-    
-    # Resource limits (adjust based on your Unraid server)
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 256M
-    
-    # Health check
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    
-    # Logging configuration
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    
-    # Security options
-    security_opt:
-      - no-new-privileges:true
-    
-    # Labels for Unraid management
-    labels:
-      - "net.unraid.docker.managed=dockerman"
-      - "net.unraid.docker.webui=http://[IP]:[PORT:8001]"
-      - "net.unraid.docker.icon=https://raw.githubusercontent.com/T4s3rF4c3/macreplay_v2/main/static/favicon.ico"
+      - data:/app/data
+      - logs:/app/logs
 
-# Optional: Networks (if you want to use custom networks)
-networks:
-  default:
-    driver: bridge
+volumes:
+  data:
+  logs:
